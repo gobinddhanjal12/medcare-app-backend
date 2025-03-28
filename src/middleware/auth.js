@@ -23,12 +23,11 @@ const verifyToken = async (req, res, next) => {
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = decoded;
 
-      // Check if user exists
-      const result = await pool.query("SELECT * FROM users WHERE id = $1", [
-        decoded.id,
-      ]);
+      const result = await pool.query(
+        "SELECT id, name, email, role FROM users WHERE id = $1",
+        [decoded.id]
+      );
 
       if (result.rows.length === 0) {
         return res.status(401).json({
@@ -36,6 +35,13 @@ const verifyToken = async (req, res, next) => {
           message: "User not found",
         });
       }
+
+      req.user = {
+        id: result.rows[0].id,
+        name: result.rows[0].name,
+        email: result.rows[0].email,
+        role: result.rows[0].role,
+      };
 
       next();
     } catch (jwtError) {

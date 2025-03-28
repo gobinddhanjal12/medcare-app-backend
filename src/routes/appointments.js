@@ -2,7 +2,9 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../config/database");
 const { verifyToken, checkRole } = require("../middleware/auth");
-const { body, validationResult } = require("express-validator");
+const { validationResult } = require("express-validator");
+const { appointmentValidation } = require("../middleware/validation");
+const { sendAppointmentConfirmation } = require("../services/emailService");
 
 router.get("/available-slots/:doctorId", async (req, res) => {
   try {
@@ -63,33 +65,9 @@ router.get("/available-slots/:doctorId", async (req, res) => {
 
 router.post(
   "/",
-  [
-    verifyToken,
-    checkRole(["patient"]),
-    body("doctor_id").isInt().withMessage("Doctor ID must be a number"),
-    body("appointment_date")
-      .isDate()
-      .withMessage("Appointment date must be a valid date")
-      .custom((value) => {
-        const date = new Date(value);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        if (date < today) {
-          throw new Error("Appointment date cannot be in the past");
-        }
-        return true;
-      }),
-    body("time_slot_id").isInt().withMessage("Time slot ID must be a number"),
-    body("consultation_type")
-      .isIn(["online", "offline"])
-      .withMessage("Consultation type must be online or offline"),
-    body("patient_age").isInt().withMessage("Patient age must be a number"),
-    body("patient_gender")
-      .isIn(["male", "female", "other"])
-      .withMessage("Patient gender must be male, female, or other"),
-    body("health_info").optional().isString(),
-  ],
+  [verifyToken, checkRole(["patient"]), ...appointmentValidation],
   async (req, res) => {
+    const client = await pool.connect();
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -110,13 +88,32 @@ router.post(
         health_info,
       } = req.body;
 
-      const patient_id = req.user.id;
-
       const formattedDate = new Date(appointment_date)
         .toISOString()
         .split("T")[0];
 
-      const result = await pool.query(
+      await client.query("BEGIN");
+
+      const doctorResult = await client.query(
+        `SELECT u.name as doctor_name, ts.start_time, ts.end_time
+         FROM doctors d
+         JOIN users u ON d.user_id = u.id
+         JOIN time_slots ts ON ts.id = $1
+         WHERE d.id = $2`,
+        [time_slot_id, doctor_id]
+      );
+
+      if (doctorResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          status: "error",
+          message: "Doctor or time slot not found",
+        });
+      }
+
+      const doctor = doctorResult.rows[0];
+
+      const result = await client.query(
         `INSERT INTO appointments (
           doctor_id,
           patient_id,
@@ -131,7 +128,7 @@ router.post(
         RETURNING *`,
         [
           doctor_id,
-          patient_id,
+          req.user.id,
           formattedDate,
           time_slot_id,
           consultation_type,
@@ -141,6 +138,24 @@ router.post(
         ]
       );
 
+      if (req.user.email) {
+        try {
+          await sendAppointmentConfirmation({
+            patient_email: req.user.email,
+            patient_name: req.user.name,
+            doctor_name: doctor.doctor_name,
+            appointment_date: formattedDate,
+            start_time: doctor.start_time,
+            end_time: doctor.end_time,
+            consultation_type,
+          });
+        } catch (emailError) {
+          console.error("Error sending confirmation email:", emailError);
+        }
+      }
+
+      await client.query("COMMIT");
+
       res.status(201).json({
         status: "success",
         message:
@@ -148,11 +163,14 @@ router.post(
         data: result.rows[0],
       });
     } catch (error) {
+      await client.query("ROLLBACK");
       console.error("Create appointment error:", error);
       res.status(500).json({
         status: "error",
         message: "Error creating appointment request",
       });
+    } finally {
+      client.release();
     }
   }
 );
@@ -254,7 +272,6 @@ router.patch(
   }
 );
 
-
 router.get(
   "/patient",
   [verifyToken, checkRole(["patient"])],
@@ -292,7 +309,6 @@ router.get(
       const countParams = status ? [req.user.id, status] : [req.user.id];
       const totalCount = await pool.query(countQuery, countParams);
 
-
       query += ` ORDER BY a.appointment_date DESC, ts.start_time DESC LIMIT $${
         queryParams.length + 1
       } OFFSET $${queryParams.length + 2}`;
@@ -322,7 +338,6 @@ router.get(
     }
   }
 );
-
 
 router.get("/:id", [verifyToken], async (req, res) => {
   try {
@@ -366,6 +381,5 @@ router.get("/:id", [verifyToken], async (req, res) => {
     });
   }
 });
-
 
 module.exports = router;
