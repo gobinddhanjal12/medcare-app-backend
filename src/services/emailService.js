@@ -62,6 +62,61 @@ const sendAppointmentConfirmation = async (appointment) => {
   return sendEmail(mailOptions);
 };
 
+const sendAppointmentStatusUpdate = async (appointment, status) => {
+  console.log(
+    "Preparing appointment status update email for:",
+    appointment.patient_email
+  );
+
+  const statusMessages = {
+    approved: {
+      subject: "Appointment Approved - Confirmation",
+      message: `
+                <p>Great news! Your appointment has been approved.</p>
+                <p>Please arrive 15 minutes before your scheduled appointment time.</p>
+                <p>If you need to reschedule or cancel your appointment, please contact us at least 24 hours in advance.</p>
+            `,
+    },
+    rejected: {
+      subject: "Appointment Request Rejected",
+      message: `
+                <p>We regret to inform you that your appointment request has been rejected.</p>
+                <p>This could be due to various reasons such as:</p>
+                <ul>
+                    <li>Doctor's unavailability</li>
+                    <li>Time slot already booked</li>
+                    <li>Administrative reasons</li>
+                </ul>
+                <p>Please feel free to book another appointment at a different time or with a different doctor.</p>
+            `,
+    },
+  };
+
+  const { subject, message } = statusMessages[status];
+
+  const mailOptions = {
+    from: process.env.SMTP_USER,
+    to: appointment.patient_email,
+    subject: subject,
+    html: `
+            <h2>Appointment Status Update</h2>
+            <p>Dear ${appointment.patient_name},</p>
+            ${message}
+            <p>Appointment Details:</p>
+            <ul>
+                <li>Doctor: ${appointment.doctor_name}</li>
+                <li>Date: ${appointment.appointment_date}</li>
+                <li>Time: ${appointment.start_time} - ${appointment.end_time}</li>
+            </ul>
+            <p>If you have any questions, please don't hesitate to contact us.</p>
+            <p>Best regards,<br>MedCare Team</p>
+        `,
+  };
+
+  return sendEmail(mailOptions);
+};
+
 module.exports = {
   sendAppointmentConfirmation,
+  sendAppointmentStatusUpdate,
 };

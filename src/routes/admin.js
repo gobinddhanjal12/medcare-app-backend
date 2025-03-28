@@ -5,6 +5,8 @@ const pool = require("../config/database");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const { cloudinary } = require("../config/cloudinary");
+const { checkRole } = require("../middleware/auth");
+const { sendAppointmentStatusUpdate } = require("../services/emailService");
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -246,153 +248,128 @@ router.get("/appointments/pending", async (req, res) => {
   }
 });
 
-router.patch("/appointments/:id/status", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
+router.patch(
+  "/appointments/:id/request-status",
+  [verifyToken, checkRole(["admin"])],
+  async (req, res) => {
+    const client = await pool.connect();
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
 
-    if (!["approved", "rejected"].includes(status)) {
-      return res.status(400).json({
-        status: "error",
-        message: 'Invalid status. Must be either "approved" or "rejected"',
-      });
-    }
+      if (!["approved", "rejected"].includes(status)) {
+        return res.status(400).json({
+          status: "error",
+          message: 'Invalid status. Must be either "approved" or "rejected"',
+        });
+      }
 
-    const result = await pool.query(
-      "UPDATE appointments SET request_status = $1, updated_at = NOW() WHERE id = $2 RETURNING *",
-      [status, id]
-    );
+      await client.query("BEGIN");
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        status: "error",
-        message: "Appointment not found",
-      });
-    }
-
-    if (status === "approved") {
-      await pool.query(
-        `UPDATE appointments 
-         SET request_status = 'rejected', updated_at = NOW() 
-         WHERE time_slot_id = $1 
-         AND doctor_id = $2 
-         AND appointment_date = $3 
-         AND id != $4 
-         AND request_status = 'pending'`,
-        [
-          result.rows[0].time_slot_id,
-          result.rows[0].doctor_id,
-          result.rows[0].appointment_date,
-          id,
-        ]
+      const appointmentResult = await client.query(
+        `SELECT 
+          a.*,
+          u.name as patient_name,
+          u.email as patient_email,
+          u2.name as doctor_name,
+          ts.start_time,
+          ts.end_time
+        FROM appointments a
+        JOIN users u ON a.patient_id = u.id
+        JOIN doctors d ON a.doctor_id = d.id
+        JOIN users u2 ON d.user_id = u2.id
+        JOIN time_slots ts ON a.time_slot_id = ts.id
+        WHERE a.id = $1`,
+        [id]
       );
-    }
 
-    res.json({
-      status: "success",
-      data: result.rows[0],
-    });
-  } catch (error) {
-    console.error("Update appointment status error:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Error updating appointment status",
-      details: error.message,
-    });
-  }
-});
+      if (appointmentResult.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          status: "error",
+          message: "Appointment not found",
+        });
+      }
 
-router.get("/doctors", async (req, res) => {
-  try {
-    const { page = 1, limit = 10 } = req.query;
-    const offset = (page - 1) * limit;
+      const appointment = appointmentResult.rows[0];
 
-    const query = `
-      SELECT 
-        d.*,
-        u.name,
-        u.email,
-        u.is_active,
-        COALESCE(AVG(r.rating), 0)::TEXT as average_rating,
-        COUNT(r.id) as total_reviews
-      FROM doctors d
-      JOIN users u ON d.user_id = u.id
-      LEFT JOIN reviews r ON d.id = r.doctor_id
-      GROUP BY d.id, u.id
-      ORDER BY u.is_active DESC, d.experience DESC
-      LIMIT $1 OFFSET $2
-    `;
+      if (status === "approved") {
+        const availabilityCheck = await client.query(
+          `SELECT a.*, u.name as patient_name
+           FROM appointments a
+           JOIN users u ON a.patient_id = u.id
+           WHERE a.doctor_id = $1 
+           AND a.appointment_date = $2 
+           AND a.time_slot_id = $3 
+           AND a.request_status = 'approved'
+           AND a.status != 'cancelled'
+           AND a.id != $4`,
+          [
+            appointment.doctor_id,
+            appointment.appointment_date,
+            appointment.time_slot_id,
+            id,
+          ]
+        );
 
-    const countQuery = "SELECT COUNT(*) FROM doctors";
+        if (availabilityCheck.rows.length > 0) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            status: "error",
+            message: `This time slot is already booked by ${availabilityCheck.rows[0].patient_name}`,
+          });
+        }
+      }
 
-    const [doctors, totalCount] = await Promise.all([
-      pool.query(query, [limit, offset]),
-      pool.query(countQuery),
-    ]);
+      await client.query(
+        "UPDATE appointments SET request_status = $1, updated_at = NOW() WHERE id = $2",
+        [status, id]
+      );
 
-    const total = parseInt(totalCount.rows[0].count);
-    const pages = Math.ceil(total / limit);
+      if (status === "approved") {
+        await client.query(
+          `UPDATE appointments 
+           SET request_status = 'rejected', updated_at = NOW() 
+           WHERE time_slot_id = $1 
+           AND doctor_id = $2 
+           AND appointment_date = $3 
+           AND id != $4 
+           AND request_status = 'pending'`,
+          [
+            appointment.time_slot_id,
+            appointment.doctor_id,
+            appointment.appointment_date,
+            id,
+          ]
+        );
 
-    res.json({
-      status: "success",
-      data: doctors.rows,
-      pagination: {
-        total,
-        page: parseInt(page),
-        pages,
-        limit: parseInt(limit),
-      },
-    });
-  } catch (error) {
-    console.error("Get all doctors error:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Error fetching doctors",
-      details: error.message,
-    });
-  }
-});
+        if (appointment.patient_email) {
+          try {
+            await sendAppointmentStatusUpdate(appointment, status);
+          } catch (emailError) {
+            console.error("Error sending status update email:", emailError);
+          }
+        }
+      }
 
-router.patch("/doctors/:id/status", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { is_active } = req.body;
+      await client.query("COMMIT");
 
-    if (typeof is_active !== "boolean") {
-      return res.status(400).json({
-        status: "error",
-        message: "is_active must be a boolean value",
+      res.json({
+        status: "success",
+        message: `Appointment ${status} successfully`,
       });
-    }
-
-    const result = await pool.query(
-      `UPDATE users u
-       SET is_active = $1, updated_at = NOW()
-       FROM doctors d
-       WHERE d.user_id = u.id AND d.id = $2
-       RETURNING u.*, d.*`,
-      [is_active, id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Error updating appointment status:", error);
+      res.status(500).json({
         status: "error",
-        message: "Doctor not found",
+        message: "Error updating appointment status",
+        details: error.message,
       });
+    } finally {
+      client.release();
     }
-
-    res.json({
-      status: "success",
-      data: result.rows[0],
-    });
-  } catch (error) {
-    console.error("Update doctor status error:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Error updating doctor status",
-      details: error.message,
-    });
   }
-});
+);
 
 module.exports = router;
