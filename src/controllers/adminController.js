@@ -183,7 +183,7 @@ const getPendingAppointments = async (req, res) => {
         JOIN doctors d ON a.doctor_id = d.id
         JOIN users u ON d.user_id = u.id
         JOIN time_slots ts ON a.time_slot_id = ts.id
-        WHERE a.request_status = 'pending'
+        WHERE a.status = 'pending'
         ORDER BY a.appointment_date ASC, ts.start_time ASC
         LIMIT $1 OFFSET $2
       `;
@@ -191,7 +191,7 @@ const getPendingAppointments = async (req, res) => {
     const countQuery = `
         SELECT COUNT(*) 
         FROM appointments 
-        WHERE request_status = 'pending'
+        WHERE status = 'pending'
       `;
 
     const [appointments, totalCount] = await Promise.all([
@@ -272,7 +272,7 @@ const updateAppointmentStatus = async (req, res) => {
            WHERE a.doctor_id = $1 
            AND a.appointment_date = $2 
            AND a.time_slot_id = $3 
-           AND a.request_status = 'approved'
+           AND a.status = 'approved'
            AND a.status != 'cancelled'
            AND a.id != $4`,
         [
@@ -293,19 +293,19 @@ const updateAppointmentStatus = async (req, res) => {
     }
 
     await client.query(
-      "UPDATE appointments SET request_status = $1, updated_at = NOW() WHERE id = $2",
+      "UPDATE appointments SET status = $1, updated_at = NOW() WHERE id = $2",
       [status, id]
     );
 
     if (status === "approved") {
       await client.query(
         `UPDATE appointments 
-           SET request_status = 'rejected', updated_at = NOW() 
+           SET status = 'rejected', updated_at = NOW() 
            WHERE time_slot_id = $1 
            AND doctor_id = $2 
            AND appointment_date = $3 
            AND id != $4 
-           AND request_status = 'pending'`,
+           AND status = 'pending'`,
         [
           appointment.time_slot_id,
           appointment.doctor_id,

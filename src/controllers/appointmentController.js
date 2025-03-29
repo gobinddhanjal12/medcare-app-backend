@@ -33,7 +33,7 @@ const availableSlots = async (req, res) => {
          FROM appointments 
          WHERE doctor_id = $1 
          AND appointment_date = $2 
-         AND request_status = 'approved'
+         AND status = 'approved'
          AND status != 'cancelled'`,
       [req.params.doctorId, date]
     );
@@ -116,7 +116,7 @@ const createAppointment = async (req, res) => {
           patient_age,
           patient_gender,
           health_info,
-          request_status
+          status
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
         RETURNING *`,
       [
@@ -173,18 +173,21 @@ const getPatientAppointment = async (req, res) => {
     const offset = (page - 1) * limit;
 
     let query = `
-        SELECT a.*, 
-               d.specialty,
-               u.name as doctor_name,
-               u.email as doctor_email,
-               ts.start_time,
-               ts.end_time
-        FROM appointments a
-        JOIN doctors d ON a.doctor_id = d.id
-        JOIN users u ON d.user_id = u.id
-        JOIN time_slots ts ON a.time_slot_id = ts.id
-        WHERE a.patient_id = $1
-      `;
+      SELECT 
+        a.*,
+        u.name as doctor_name,
+        ts.start_time,
+        ts.end_time,
+        CASE 
+          WHEN a.status = 'approved' AND NOT a.is_reviewed THEN true 
+          ELSE false 
+        END as can_review
+      FROM appointments a
+      JOIN doctors d ON a.doctor_id = d.id
+      JOIN users u ON d.user_id = u.id
+      JOIN time_slots ts ON a.time_slot_id = ts.id
+      WHERE a.patient_id = $1
+    `;
     const queryParams = [req.user.id];
 
     if (status) {
@@ -193,11 +196,11 @@ const getPatientAppointment = async (req, res) => {
     }
 
     const countQuery = `
-        SELECT COUNT(*) 
-        FROM appointments a
-        WHERE a.patient_id = $1
-        ${status ? "AND a.status = $2" : ""}
-      `;
+      SELECT COUNT(*) 
+      FROM appointments a
+      WHERE a.patient_id = $1
+      ${status ? "AND a.status = $2" : ""}
+    `;
     const countParams = status ? [req.user.id, status] : [req.user.id];
     const totalCount = await pool.query(countQuery, countParams);
 
@@ -225,7 +228,7 @@ const getPatientAppointment = async (req, res) => {
     console.error("Get patient appointments error:", error);
     res.status(500).json({
       status: "error",
-      message: "Error fetching patient appointments",
+      message: "Error fetching appointments",
     });
   }
 };
@@ -272,6 +275,7 @@ const getAppointmentById = async (req, res) => {
     });
   }
 };
+
 
 module.exports = {
   availableSlots,
