@@ -18,11 +18,6 @@ const appointmentValidation = [
   body("consultation_type")
     .isIn(["online", "offline"])
     .withMessage("Consultation type must be online or offline"),
-  body("patient_age").isInt().withMessage("Patient age must be a number"),
-  body("patient_gender")
-    .isIn(["male", "female", "other"])
-    .withMessage("Patient gender must be male, female, or other"),
-  body("health_info").optional().isString(),
 ];
 
 module.exports = {

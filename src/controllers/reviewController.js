@@ -2,32 +2,40 @@ const pool = require("../config/database");
 
 const getAllReviews = async (req, res) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 10, sort = "latest" } = req.query;
     const offset = (page - 1) * limit;
 
     const countResult = await pool.query("SELECT COUNT(*) FROM reviews");
     const total = parseInt(countResult.rows[0].count);
     const pages = Math.ceil(total / limit);
 
-    const result = await pool.query(
-      `SELECT 
-                r.*,
-                u.name as patient_name,
-                d.specialty,
-                doc.name as doctor_name,
-                a.appointment_date,
-                ts.start_time,
-                ts.end_time
-            FROM reviews r
-            JOIN users u ON r.patient_id = u.id
-            JOIN appointments a ON r.appointment_id = a.id
-            JOIN doctors d ON r.doctor_id = d.id
-            JOIN users doc ON d.user_id = doc.id
-            JOIN time_slots ts ON a.time_slot_id = ts.id
-            ORDER BY r.rating DESC, r.created_at DESC
-            LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
+    let orderByClause = "ORDER BY r.created_at DESC";
+
+    if (sort === "top-rated") {
+      orderByClause = "ORDER BY r.rating DESC, r.created_at DESC";
+    }
+
+    const query = `
+        SELECT 
+          r.*,
+          u.name as patient_name,
+          d.specialty,
+          d.photo_path as doctor_photo,
+          doc.name as doctor_name,
+          a.appointment_date,
+          ts.start_time,
+          ts.end_time
+        FROM reviews r
+        JOIN users u ON r.patient_id = u.id
+        JOIN appointments a ON r.appointment_id = a.id
+        JOIN doctors d ON r.doctor_id = d.id
+        JOIN users doc ON d.user_id = doc.id
+        JOIN time_slots ts ON a.time_slot_id = ts.id
+        ${orderByClause} 
+        LIMIT $1 OFFSET $2
+      `;
+
+    const result = await pool.query(query, [limit, offset]);
 
     res.json({
       status: "success",
@@ -96,7 +104,6 @@ const createReview = async (req, res) => {
   try {
     const { appointment_id, rating, comment } = req.body;
 
-    // Validate input
     if (!appointment_id || !rating || rating < 1 || rating > 5) {
       return res.status(400).json({
         status: "error",
@@ -106,7 +113,6 @@ const createReview = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Check if appointment exists and belongs to the patient
     const appointmentResult = await client.query(
       `SELECT a.*, d.id as doctor_id 
              FROM appointments a
@@ -125,7 +131,6 @@ const createReview = async (req, res) => {
 
     const appointment = appointmentResult.rows[0];
 
-    // Check if review already exists
     const existingReview = await client.query(
       "SELECT * FROM reviews WHERE appointment_id = $1",
       [appointment_id]
@@ -139,15 +144,12 @@ const createReview = async (req, res) => {
       });
     }
 
-    // Create the review
     const result = await client.query(
       `INSERT INTO reviews (doctor_id, patient_id, appointment_id, rating, comment)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING *`,
       [appointment.doctor_id, req.user.id, appointment_id, rating, comment]
     );
-
-    // Update doctor's average rating
     await client.query(
       `UPDATE doctors 
              SET average_rating = (
@@ -158,8 +160,6 @@ const createReview = async (req, res) => {
              WHERE id = $1`,
       [appointment.doctor_id]
     );
-
-    // Mark appointment as reviewed
     await client.query(
       "UPDATE appointments SET is_reviewed = TRUE WHERE id = $1",
       [appointment_id]
@@ -186,5 +186,5 @@ const createReview = async (req, res) => {
 module.exports = {
   getAllReviews,
   getAllReviewOfSingleDoctor,
-  createReview
+  createReview,
 };

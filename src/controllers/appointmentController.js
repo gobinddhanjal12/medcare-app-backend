@@ -61,6 +61,7 @@ const availableSlots = async (req, res) => {
 
 const createAppointment = async (req, res) => {
   const client = await pool.connect();
+
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -71,15 +72,8 @@ const createAppointment = async (req, res) => {
       });
     }
 
-    const {
-      doctor_id,
-      appointment_date,
-      time_slot_id,
-      consultation_type,
-      patient_age,
-      patient_gender,
-      health_info,
-    } = req.body;
+    const { doctor_id, appointment_date, time_slot_id, consultation_type } =
+      req.body;
 
     const formattedDate = new Date(appointment_date)
       .toISOString()
@@ -113,22 +107,11 @@ const createAppointment = async (req, res) => {
           appointment_date,
           time_slot_id,
           consultation_type,
-          patient_age,
-          patient_gender,
-          health_info,
+          
           status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+        ) VALUES ($1, $2, $3, $4, $5, 'pending')
         RETURNING *`,
-      [
-        doctor_id,
-        req.user.id,
-        formattedDate,
-        time_slot_id,
-        consultation_type,
-        patient_age,
-        patient_gender,
-        health_info,
-      ]
+      [doctor_id, req.user.id, formattedDate, time_slot_id, consultation_type]
     );
 
     if (req.user.email) {
@@ -176,6 +159,7 @@ const getPatientAppointment = async (req, res) => {
       SELECT 
         a.*,
         u.name as doctor_name,
+        d.specialty,
         ts.start_time,
         ts.end_time,
         CASE 
@@ -275,7 +259,6 @@ const getAppointmentById = async (req, res) => {
     });
   }
 };
-
 
 module.exports = {
   availableSlots,

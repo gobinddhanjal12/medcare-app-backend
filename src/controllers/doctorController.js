@@ -75,7 +75,7 @@ const doctorFilter = async (req, res) => {
       paramCount++;
     }
 
-    if (experience) {
+    if (experience && !isNaN(parseInt(experience))) {
       baseQuery += ` AND d.experience >= $${paramCount}`;
       queryParams.push(parseInt(experience));
       paramCount++;
@@ -83,10 +83,14 @@ const doctorFilter = async (req, res) => {
 
     baseQuery += ` GROUP BY d.id, u.name, u.email`;
 
-    if (rating) {
-      baseQuery += ` HAVING COALESCE(AVG(r.rating), 0) >= $${paramCount}`;
-      queryParams.push(parseFloat(rating));
-      paramCount++;
+    if (rating && !isNaN(parseFloat(rating))) {
+      const minRating = parseFloat(rating);
+      const maxRating = minRating + 1;
+      baseQuery += ` HAVING COALESCE(AVG(r.rating), 0) >= $${paramCount} AND COALESCE(AVG(r.rating), 0) < $${
+        paramCount + 1
+      }`;
+      queryParams.push(minRating, maxRating);
+      paramCount += 2;
     }
 
     const countQuery = `SELECT COUNT(*) FROM (SELECT d.id ${baseQuery}) AS filtered_doctors`;
@@ -134,5 +138,5 @@ const doctorFilter = async (req, res) => {
 
 module.exports = {
   getDoctorById,
-  doctorFilter
+  doctorFilter,
 };
