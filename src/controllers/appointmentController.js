@@ -189,7 +189,7 @@ const getPatientAppointment = async (req, res) => {
     const countParams = status ? [req.user.id, status] : [req.user.id];
     const totalCount = await pool.query(countQuery, countParams);
 
-    query += ` ORDER BY a.appointment_date DESC, ts.start_time DESC LIMIT $${
+    query += ` ORDER BY a.id DESC, ts.start_time DESC LIMIT $${
       queryParams.length + 1
     } OFFSET $${queryParams.length + 2}`;
     queryParams.push(limit, offset);
