@@ -42,6 +42,7 @@ const doctorFilter = async (req, res) => {
       experience,
       rating,
       name,
+      max_experience,
       page = 1,
       limit = 6,
     } = req.query;
@@ -50,7 +51,6 @@ const doctorFilter = async (req, res) => {
     let baseQuery = `
       FROM doctors d
       JOIN users u ON d.user_id = u.id
-      LEFT JOIN reviews r ON d.id = r.doctor_id
       WHERE 1=1
     `;
 
@@ -75,18 +75,22 @@ const doctorFilter = async (req, res) => {
       paramCount++;
     }
 
-    if (experience && !isNaN(parseInt(experience))) {
+    if (experience) {
       baseQuery += ` AND d.experience >= $${paramCount}`;
       queryParams.push(parseInt(experience));
       paramCount++;
     }
 
-    baseQuery += ` GROUP BY d.id, u.name, u.email`;
+    if (max_experience) {
+      baseQuery += ` AND d.experience <= $${paramCount}`;
+      queryParams.push(parseInt(max_experience));
+      paramCount++;
+    }
 
     if (rating && !isNaN(parseFloat(rating))) {
       const minRating = parseFloat(rating);
       const maxRating = minRating + 1;
-      baseQuery += ` HAVING COALESCE(AVG(r.rating), 0) >= $${paramCount} AND COALESCE(AVG(r.rating), 0) < $${
+      baseQuery += ` AND d.average_rating >= $${paramCount} AND d.average_rating < $${
         paramCount + 1
       }`;
       queryParams.push(minRating, maxRating);
@@ -99,8 +103,7 @@ const doctorFilter = async (req, res) => {
       SELECT 
         d.*,
         u.name,
-        u.email,
-        COALESCE(AVG(r.rating), 0)::TEXT as average_rating
+        u.email
       ${baseQuery}
       ORDER BY d.experience DESC 
       LIMIT $${paramCount} OFFSET $${paramCount + 1}

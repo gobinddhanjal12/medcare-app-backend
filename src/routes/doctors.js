@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const {
-  getDoctorById,
   doctorFilter,
+  getDoctorById,
 } = require("../controllers/doctorController");
 
 router.get("/filter", doctorFilter);
