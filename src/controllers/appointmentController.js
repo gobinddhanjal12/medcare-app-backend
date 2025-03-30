@@ -28,13 +28,13 @@ const availableSlots = async (req, res) => {
       "SELECT * FROM time_slots ORDER BY start_time"
     );
 
+    console.log(date);
     const bookedSlotsResult = await pool.query(
       `SELECT time_slot_id 
          FROM appointments 
          WHERE doctor_id = $1 
          AND appointment_date = $2 
-         AND status = 'approved'
-         AND status != 'cancelled'`,
+         AND status = 'approved'`,
       [req.params.doctorId, date]
     );
 
@@ -107,7 +107,6 @@ const createAppointment = async (req, res) => {
           appointment_date,
           time_slot_id,
           consultation_type,
-          
           status
         ) VALUES ($1, $2, $3, $4, $5, 'pending')
         RETURNING *`,
@@ -160,6 +159,8 @@ const getPatientAppointment = async (req, res) => {
         a.*,
         u.name as doctor_name,
         d.specialty,
+        d.location,
+        d.photo_path as doctor_photo,
         ts.start_time,
         ts.end_time,
         CASE 

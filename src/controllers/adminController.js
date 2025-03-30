@@ -78,6 +78,7 @@ const createDoctor = async (req, res) => {
     }
 
     const userId = userResult.rows[0].id;
+    
 
     let photo_path = process.env.DEFAULT_DOCTOR_IMAGE;
     if (req.file) {
@@ -175,6 +176,7 @@ const getPendingAppointments = async (req, res) => {
           p.email as patient_email,
           d.specialty,
           u.name as doctor_name,
+          d.location as location,
           u.email as doctor_email,
           ts.start_time,
           ts.end_time

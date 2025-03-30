@@ -1,5 +1,89 @@
 const pool = require("../config/database");
 
+const createReview = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { appointment_id, rating, comment } = req.body;
+
+    if (!appointment_id || !rating || rating < 1 || rating > 5) {
+      return res.status(400).json({
+        status: "error",
+        message: "Invalid input. Rating must be between 1 and 5.",
+      });
+    }
+
+    await client.query("BEGIN");
+
+    const appointmentResult = await client.query(
+      `SELECT a.*, d.id as doctor_id 
+               FROM appointments a
+               JOIN doctors d ON a.doctor_id = d.id
+               WHERE a.id = $1 AND a.patient_id = $2 AND a.status = 'approved' AND NOT a.is_reviewed`,
+      [appointment_id, req.user.id]
+    );
+
+    if (appointmentResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        status: "error",
+        message: "Appointment not found, not approved, or already reviewed",
+      });
+    }
+
+    const appointment = appointmentResult.rows[0];
+
+    const existingReview = await client.query(
+      "SELECT * FROM reviews WHERE appointment_id = $1",
+      [appointment_id]
+    );
+
+    if (existingReview.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        status: "error",
+        message: "Review already exists for this appointment",
+      });
+    }
+
+    const result = await client.query(
+      `INSERT INTO reviews (doctor_id, patient_id, appointment_id, rating, comment)
+               VALUES ($1, $2, $3, $4, $5)
+               RETURNING *`,
+      [appointment.doctor_id, req.user.id, appointment_id, rating, comment]
+    );
+    await client.query(
+      `UPDATE doctors 
+               SET average_rating = (
+                 SELECT ROUND(AVG(rating)::numeric, 2)
+                 FROM reviews
+                 WHERE doctor_id = $1
+               )
+               WHERE id = $1`,
+      [appointment.doctor_id]
+    );
+    await client.query(
+      "UPDATE appointments SET is_reviewed = TRUE WHERE id = $1",
+      [appointment_id]
+    );
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      status: "success",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Error creating review:", error);
+    res.status(500).json({
+      status: "error",
+      message: "Error creating review",
+    });
+  } finally {
+    client.release();
+  }
+};
+
 const getAllReviews = async (req, res) => {
   try {
     const { page = 1, limit = 10, sort = "latest" } = req.query;
@@ -99,92 +183,8 @@ const getAllReviewOfSingleDoctor = async (req, res) => {
   }
 };
 
-const createReview = async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const { appointment_id, rating, comment } = req.body;
-
-    if (!appointment_id || !rating || rating < 1 || rating > 5) {
-      return res.status(400).json({
-        status: "error",
-        message: "Invalid input. Rating must be between 1 and 5.",
-      });
-    }
-
-    await client.query("BEGIN");
-
-    const appointmentResult = await client.query(
-      `SELECT a.*, d.id as doctor_id 
-             FROM appointments a
-             JOIN doctors d ON a.doctor_id = d.id
-             WHERE a.id = $1 AND a.patient_id = $2 AND a.status = 'approved' AND NOT a.is_reviewed`,
-      [appointment_id, req.user.id]
-    );
-
-    if (appointmentResult.rows.length === 0) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({
-        status: "error",
-        message: "Appointment not found, not approved, or already reviewed",
-      });
-    }
-
-    const appointment = appointmentResult.rows[0];
-
-    const existingReview = await client.query(
-      "SELECT * FROM reviews WHERE appointment_id = $1",
-      [appointment_id]
-    );
-
-    if (existingReview.rows.length > 0) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        status: "error",
-        message: "Review already exists for this appointment",
-      });
-    }
-
-    const result = await client.query(
-      `INSERT INTO reviews (doctor_id, patient_id, appointment_id, rating, comment)
-             VALUES ($1, $2, $3, $4, $5)
-             RETURNING *`,
-      [appointment.doctor_id, req.user.id, appointment_id, rating, comment]
-    );
-    await client.query(
-      `UPDATE doctors 
-             SET average_rating = (
-               SELECT ROUND(AVG(rating)::numeric, 2)
-               FROM reviews
-               WHERE doctor_id = $1
-             )
-             WHERE id = $1`,
-      [appointment.doctor_id]
-    );
-    await client.query(
-      "UPDATE appointments SET is_reviewed = TRUE WHERE id = $1",
-      [appointment_id]
-    );
-
-    await client.query("COMMIT");
-
-    res.status(201).json({
-      status: "success",
-      data: result.rows[0],
-    });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("Error creating review:", error);
-    res.status(500).json({
-      status: "error",
-      message: "Error creating review",
-    });
-  } finally {
-    client.release();
-  }
-};
-
 module.exports = {
+  createReview,
   getAllReviews,
   getAllReviewOfSingleDoctor,
-  createReview,
 };

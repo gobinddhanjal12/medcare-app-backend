@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 const { verifyToken, isAdmin } = require("../middleware/auth");
 const multer = require("multer");
-const { checkRole } = require("../middleware/auth");
 const {
   createDoctor,
   getPendingAppointments,
@@ -25,19 +24,10 @@ const upload = multer({
 
 router.use(verifyToken, isAdmin);
 
-router.post(
-  "/doctors",
-  [verifyToken, isAdmin],
-  upload.single("photo"),
-  createDoctor
-);
+router.post("/doctors", upload.single("photo"), createDoctor);
 
 router.get("/appointments/pending", getPendingAppointments);
 
-router.patch(
-  "/appointments/:id/request-status",
-  [verifyToken, checkRole(["admin"])],
-  updateAppointmentStatus
-);
+router.patch("/appointments/:id/request-status", updateAppointmentStatus);
 
 module.exports = router;
