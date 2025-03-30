@@ -116,7 +116,26 @@ const sendAppointmentStatusUpdate = async (appointment, status) => {
   return sendEmail(mailOptions);
 };
 
+const sendPasswordResetEmail = async (email, resetLink) => {
+  const mailOptions = {
+    from: process.env.SMTP_USER,
+    to: email,
+    subject: "Password Reset Request",
+    html: `
+        <h2>Password Reset</h2>
+        <p>Click the link below to reset your password:</p>
+        <a href="${resetLink}">${resetLink}</a>
+        <p>This link will expire in 1 hour.</p>
+        <p>If you did not request this, please ignore this email.</p>
+        <p>Best regards,<br>Your App Team</p>
+    `,
+  };
+
+  return sendEmail(mailOptions);
+};
+
 module.exports = {
   sendAppointmentConfirmation,
   sendAppointmentStatusUpdate,
+  sendPasswordResetEmail
 };

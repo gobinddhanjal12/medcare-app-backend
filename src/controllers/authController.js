@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const pool = require("../config/database");
+const { sendPasswordResetEmail } = require("../services/emailService");
 
 const signup = async (req, res) => {
   try {
@@ -140,6 +141,95 @@ const getCurrentUser = async (req, res) => {
   }
 };
 
+const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const result = await pool.query("SELECT id FROM users WHERE email = $1", [
+      email,
+    ]);
+
+    if (result.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ status: "error", message: "User not found" });
+    }
+
+    const user = result.rows[0];
+
+    const resetToken = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
+      expiresIn: "1h",
+    });
+
+    await pool.query("UPDATE users SET reset_token = $1 WHERE id = $2", [
+      resetToken,
+      user.id,
+    ]);
+
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+    await sendPasswordResetEmail(email, resetLink);
+
+    res.json({
+      status: "success",
+      message: "Password reset email sent successfully",
+    });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    res
+      .status(500)
+      .json({ status: "error", message: "Error sending password reset email" });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  try {
+    const { token, password } = req.body;
+
+    console.log(req.body);
+
+    if (!token || !password) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Token and new password required" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Invalid or expired token" });
+    }
+
+    const userResult = await pool.query(
+      "SELECT id FROM users WHERE id = $1 AND reset_token = $2",
+      [decoded.id, token]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Invalid or expired token" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    await pool.query(
+      "UPDATE users SET password = $1, reset_token = NULL WHERE id = $2",
+      [hashedPassword, decoded.id]
+    );
+
+    res.json({ status: "success", message: "Password reset successfully" });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res
+      .status(500)
+      .json({ status: "error", message: "Error resetting password" });
+  }
+};
+
 const adminLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -198,5 +288,7 @@ module.exports = {
   signup,
   login,
   getCurrentUser,
+  forgotPassword,
+  resetPassword,
   adminLogin,
 };

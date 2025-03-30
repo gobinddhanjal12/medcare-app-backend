@@ -6,13 +6,15 @@ const {
   login,
   getCurrentUser,
   adminLogin,
+  forgotPassword,
+  resetPassword,
 } = require("../controllers/authController");
 const { validateEmailDomain } = require("../middleware/auth");
 const { checkRole } = require("../middleware/auth");
 const passport = require("passport");
 
-
 router.post("/signup", validateEmailDomain, signup);
+
 router.post("/login", login);
 
 router.get(
@@ -41,6 +43,10 @@ router.get(
   [verifyToken, checkRole(["patient", "admin"])],
   getCurrentUser
 );
+
+router.post("/forgot-password", forgotPassword);
+
+router.post("/reset-password", resetPassword);
 
 router.post("/admin/login", adminLogin);
 
