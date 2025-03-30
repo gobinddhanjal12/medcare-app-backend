@@ -78,7 +78,6 @@ const createDoctor = async (req, res) => {
     }
 
     const userId = userResult.rows[0].id;
-    
 
     let photo_path = process.env.DEFAULT_DOCTOR_IMAGE;
     if (req.file) {
@@ -186,7 +185,7 @@ const getPendingAppointments = async (req, res) => {
         JOIN users u ON d.user_id = u.id
         JOIN time_slots ts ON a.time_slot_id = ts.id
         WHERE a.status = 'pending'
-        ORDER BY a.appointment_date ASC, ts.start_time ASC
+        ORDER BY a.id ASC
         LIMIT $1 OFFSET $2
       `;
 
@@ -239,57 +238,48 @@ const updateAppointmentStatus = async (req, res) => {
 
     await client.query("BEGIN");
 
-    const appointmentResult = await client.query(
-      `SELECT 
-          a.*,
-          u.name as patient_name,
-          u.email as patient_email,
-          u2.name as doctor_name,
-          ts.start_time,
-          ts.end_time
-        FROM appointments a
-        JOIN users u ON a.patient_id = u.id
-        JOIN doctors d ON a.doctor_id = d.id
-        JOIN users u2 ON d.user_id = u2.id
-        JOIN time_slots ts ON a.time_slot_id = ts.id
-        WHERE a.id = $1`,
-      [id]
-    );
+    const appointmentQuery = `
+      SELECT 
+        a.*,
+        u.name AS patient_name,
+        u.email AS patient_email, 
+        u2.name AS doctor_name, ts.start_time, ts.end_time 
+      FROM appointments a
+      JOIN users u ON a.patient_id = u.id
+      JOIN doctors d ON a.doctor_id = d.id
+      JOIN users u2 ON d.user_id = u2.id
+      JOIN time_slots ts ON a.time_slot_id = ts.id
+      WHERE a.id = $1`;
 
-    if (appointmentResult.rows.length === 0) {
+    const { rows } = await client.query(appointmentQuery, [id]);
+    if (rows.length === 0) {
       await client.query("ROLLBACK");
-      return res.status(404).json({
-        status: "error",
-        message: "Appointment not found",
-      });
+      return res
+        .status(404)
+        .json({ status: "error", message: "Appointment not found" });
     }
 
-    const appointment = appointmentResult.rows[0];
+    const appointment = rows[0];
 
     if (status === "approved") {
-      const availabilityCheck = await client.query(
-        `SELECT a.*, u.name as patient_name
-           FROM appointments a
-           JOIN users u ON a.patient_id = u.id
-           WHERE a.doctor_id = $1 
-           AND a.appointment_date = $2 
-           AND a.time_slot_id = $3 
-           AND a.status = 'approved'
-           AND a.status != 'cancelled'
-           AND a.id != $4`,
-        [
-          appointment.doctor_id,
-          appointment.appointment_date,
-          appointment.time_slot_id,
-          id,
-        ]
-      );
+      const conflictQuery = `
+        SELECT 1 FROM appointments 
+        WHERE doctor_id = $1 AND appointment_date = $2 
+        AND time_slot_id = $3 AND status = 'approved' 
+        AND id != $4`;
 
-      if (availabilityCheck.rows.length > 0) {
+      const conflictCheck = await client.query(conflictQuery, [
+        appointment.doctor_id,
+        appointment.appointment_date,
+        appointment.time_slot_id,
+        id,
+      ]);
+
+      if (conflictCheck.rows.length > 0) {
         await client.query("ROLLBACK");
         return res.status(400).json({
           status: "error",
-          message: `This time slot is already booked by ${availabilityCheck.rows[0].patient_name}`,
+          message: "This time slot is already booked.",
         });
       }
     }
@@ -300,28 +290,62 @@ const updateAppointmentStatus = async (req, res) => {
     );
 
     if (status === "approved") {
-      await client.query(
-        `UPDATE appointments 
-           SET status = 'rejected', updated_at = NOW() 
-           WHERE time_slot_id = $1 
-           AND doctor_id = $2 
-           AND appointment_date = $3 
-           AND id != $4 
-           AND status = 'pending'`,
-        [
-          appointment.time_slot_id,
-          appointment.doctor_id,
-          appointment.appointment_date,
-          id,
-        ]
-      );
+      const rejectQuery = `
+        UPDATE appointments 
+        SET status = 'rejected', updated_at = NOW() 
+        WHERE time_slot_id = $1 AND doctor_id = $2 
+        AND appointment_date = $3 AND id != $4 
+        AND status = 'pending' 
+        RETURNING id, patient_id`;
 
-      if (appointment.patient_email) {
-        try {
-          await sendAppointmentStatusUpdate(appointment, status);
-        } catch (emailError) {
-          console.error("Error sending status update email:", emailError);
-        }
+      const { rows: rejectedAppointments } = await client.query(rejectQuery, [
+        appointment.time_slot_id,
+        appointment.doctor_id,
+        appointment.appointment_date,
+        id,
+      ]);
+
+      if (rejectedAppointments.length > 0) {
+        const rejectedIds = rejectedAppointments.map((a) => a.patient_id);
+        
+        const patientQuery = `SELECT a.id, 
+        a.appointment_date, 
+        u.email AS patient_email, 
+        u.name AS patient_name, 
+        u2.name AS doctor_name, ts.start_time, ts.end_time 
+        FROM appointments a
+        JOIN users u ON a.patient_id = u.id
+        JOIN doctors d ON a.doctor_id = d.id
+        JOIN users u2 ON d.user_id = u2.id
+        JOIN time_slots ts ON a.time_slot_id = ts.id
+        WHERE a.id = ANY($1)`;
+
+        const { rows: rejectedDetails } = await client.query(patientQuery, [
+          rejectedIds,
+        ]);
+
+        await Promise.all(
+          rejectedDetails.map(async (rejected) => {
+            if (rejected.patient_email) {
+              try {
+                await sendAppointmentStatusUpdate(rejected, "rejected");
+              } catch (emailError) {
+                console.error(
+                  `Error sending rejection email to ${rejected.patient_email}:`,
+                  emailError
+                );
+              }
+            }
+          })
+        );
+      }
+    }
+
+    if (appointment.patient_email) {
+      try {
+        await sendAppointmentStatusUpdate(appointment, status);
+      } catch (emailError) {
+        console.error(`Error sending ${status} email:`, emailError);
       }
     }
 
