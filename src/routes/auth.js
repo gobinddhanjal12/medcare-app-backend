@@ -4,6 +4,7 @@ const { verifyToken } = require("../middleware/auth");
 const {
   signup,
   login,
+  logout,
   getCurrentUser,
   adminLogin,
   forgotPassword,
@@ -16,6 +17,8 @@ const passport = require("passport");
 router.post("/signup", validateEmailDomain, signup);
 
 router.post("/login", login);
+
+router.post("/logout", logout);
 
 router.get(
   "/google",
@@ -34,7 +37,15 @@ router.get(
         `${process.env.FRONTEND_URL}/login?error=Authentication Failed`
       );
     }
-    res.redirect(`${process.env.FRONTEND_URL}/login?token=${req.user.token}`);
+
+    res.cookie("token", req.user.token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      domain: "localhost",
+    });
+
+    res.redirect(`${process.env.FRONTEND_URL}/`);
   }
 );
 

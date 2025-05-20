@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { verifyToken, isAdmin } = require("../middleware/auth");
+const { verifyToken, checkRole } = require("../middleware/auth");
 const multer = require("multer");
 const {
   createDoctor,
@@ -22,7 +22,7 @@ const upload = multer({
   },
 });
 
-router.use(verifyToken, isAdmin);
+router.use(verifyToken,checkRole(["admin"]));
 
 router.post("/doctors", upload.single("photo"), createDoctor);
 

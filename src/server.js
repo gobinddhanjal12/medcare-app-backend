@@ -9,12 +9,26 @@ const doctorRoutes = require("./routes/doctors");
 const appointmentRoutes = require("./routes/appointments");
 const adminRoutes = require("./routes/admin");
 const reviewRoutes = require("./routes/reviews");
+const cookieParser = require("cookie-parser");
 
 const app = express();
 
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.ADMIN_FRONTEND_URL,
+];
+
+app.use(cookieParser());
 app.use(
   cors({
-    origin: "*",
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      } else {
+        return callback(new Error("Not allowed by CORS"));
+      }
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization", "x-admin-secret"],
     exposedHeaders: ["Content-Range", "X-Content-Range"],

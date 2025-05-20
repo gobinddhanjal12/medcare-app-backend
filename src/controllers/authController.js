@@ -56,10 +56,9 @@ const login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
-      [email]
-    );
+    const result = await pool.query("SELECT * FROM users WHERE email = $1", [
+      email,
+    ]);
 
     if (result.rows.length === 0) {
       return res.status(401).json({
@@ -84,10 +83,16 @@ const login = async (req, res) => {
       { expiresIn: "24h" }
     );
 
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "Strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
     res.json({
       status: "success",
       data: {
-        token,
         user: {
           id: user.id,
           email: user.email,
@@ -128,10 +133,7 @@ const getCurrentUser = async (req, res) => {
       });
     }
 
-    res.json({
-      status: "success",
-      data: result.rows[0],
-    });
+    return res.status(200).json(result.rows[0]);
   } catch (error) {
     console.error("Get user details error:", error);
     res.status(500).json({
@@ -139,6 +141,18 @@ const getCurrentUser = async (req, res) => {
       message: "Error fetching user details",
     });
   }
+};
+
+const logout = (req, res) => {
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+  });
+
+  return res.status(200).json({
+    status: "success",
+    message: "Logged out successfully",
+  });
 };
 
 const forgotPassword = async (req, res) => {
@@ -185,8 +199,6 @@ const forgotPassword = async (req, res) => {
 const resetPassword = async (req, res) => {
   try {
     const { token, password } = req.body;
-
-    console.log(req.body);
 
     if (!token || !password) {
       return res
@@ -262,10 +274,16 @@ const adminLogin = async (req, res) => {
       { expiresIn: "24h" }
     );
 
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "Strict",
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
     res.json({
       status: "success",
       data: {
-        token,
         user: {
           id: user.id,
           email: user.email,
@@ -287,6 +305,7 @@ const adminLogin = async (req, res) => {
 module.exports = {
   signup,
   login,
+  logout,
   getCurrentUser,
   forgotPassword,
   resetPassword,
