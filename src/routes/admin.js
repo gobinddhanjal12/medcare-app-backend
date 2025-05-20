@@ -22,7 +22,8 @@ const upload = multer({
   },
 });
 
-router.use(verifyToken,checkRole(["admin"]));
+router.use(verifyToken);
+// router.use(verifyToken,checkRole(["admin"]));
 
 router.post("/doctors", upload.single("photo"), createDoctor);
 

@@ -65,6 +65,8 @@ const checkRole = (roles) => {
         });
       }
 
+      
+
       if (!roles.includes(result.rows[0].role)) {
         return res.status(403).json({
           status: "error",
